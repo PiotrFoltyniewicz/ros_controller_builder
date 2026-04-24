@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-web-video-server \
     ros-humble-teleop-twist-keyboard \
     python3-pip \
+    ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a workspace

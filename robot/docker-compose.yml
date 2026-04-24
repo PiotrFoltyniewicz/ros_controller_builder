@@ -1,47 +1,24 @@
-version: "3.9"
-
 services:
   ros2-turtle:
     build: .
     container_name: ros2_turtle
     restart: unless-stopped
-
-    # -------------------------------------------------------
-    # Network mode: host gives the container the same IP as
-    # your machine — simplest option for WiFi/LAN access.
-    # Switch to "bridge" and use ports: if you need isolation.
-    # -------------------------------------------------------
     network_mode: host
 
-    # Uncomment below if you prefer bridge mode instead:
-    # networks:
-    #   - ros_net
-    # ports:
-    #   - "9090:9090"   # rosbridge WebSocket
-    #   - "8080:8080"   # web_video_server HTTP stream
-
     environment:
-      # ROS2 domain ID — all devices on the same WiFi must use the same ID
       - ROS_DOMAIN_ID=0
-      # Disable automatic discovery over loopback only (needed for host mode)
       - ROS_LOCALHOST_ONLY=0
-      # Use Cyclone DDS for better WiFi performance (optional, installed by default)
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
+      # 👇 IMPORTANT: enable GUI
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+
     volumes:
-      # Optional: persist any recorded bags or config
       - ros2_data:/ros2_ws/data
 
-    # Give turtlesim a graphical display if running locally with X11
-    # Comment out if running headless (the window won't appear, but topics still work)
-    # environment:
-    #   DISPLAY: $DISPLAY
-    # volumes:
-    #   - /tmp/.X11-unix:/tmp/.X11-unix
+      # 👇 share X11 socket with container
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
 volumes:
   ros2_data:
-
-# networks:
-#   ros_net:
-#     driver: bridge
