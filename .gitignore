@@ -1,0 +1,92 @@
+# ============================================================
+# FLUTTER / DART
+# ============================================================
+
+# Dependencies
+mobile/.dart_tool/
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/.packages
+
+# Generated files
+mobile/*.g.dart
+mobile/**/*.g.dart
+mobile/*.freezed.dart
+mobile/**/*.freezed.dart
+
+# IDE
+mobile/.idea/
+mobile/.vscode/
+mobile/*.iml
+
+# Android
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/key.properties
+mobile/android/app/google-services.json
+mobile/android/captures/
+mobile/android/GeneratedPluginRegistrant.java
+mobile/android/.kotlin/
+
+# iOS
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Runner/GeneratedPluginRegistrant.*
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/ephemeral/
+
+# macOS
+mobile/macos/Flutter/GeneratedPluginRegistrant.swift
+mobile/macos/Flutter/ephemeral/
+
+# Web
+mobile/web/
+
+# Environment / secrets
+mobile/.env
+mobile/.env.*
+mobile/**/google-services.json
+mobile/**/GoogleService-Info.plist
+
+# ============================================================
+# DOCKER / ROS2
+# ============================================================
+
+# Docker build cache and override files
+robot/docker-compose.override.yml
+robot/.env
+
+# ROS2 build artifacts (if ever building inside robot/ directly)
+robot/build/
+robot/install/
+robot/log/
+
+# Recorded ROS2 bags
+robot/**/*.db3
+robot/**/*.yaml.bag
+
+# ============================================================
+# GENERAL
+# ============================================================
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets / environment
+.env
+.env.*
+*.pem
+*.key
