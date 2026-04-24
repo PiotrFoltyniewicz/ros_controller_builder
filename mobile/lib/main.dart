@@ -1,121 +1,364 @@
 import 'package:flutter/material.dart';
+import 'ros_bridge.dart';
 
-void main() {
-  runApp(const MyApp());
-}
+void main() => runApp(const MyApp());
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+      title: 'Turtle Controller',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(useMaterial3: true).copyWith(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF00E5A0),
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0D0D0D),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const ControllerPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+// ---------------------------------------------------------------------------
+// Controller page
+// ---------------------------------------------------------------------------
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class ControllerPage extends StatefulWidget {
+  const ControllerPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<ControllerPage> createState() => _ControllerPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _ControllerPageState extends State<ControllerPage> {
+  final _ros = RosBridge();
+  final _hostController = TextEditingController(text: '192.168.1.x');
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  static const double _speed = 2.0;
+  static const double _turnSpeed = 1.8;
+
+  @override
+  void dispose() {
+    _ros.dispose();
+    _hostController.dispose();
+    super.dispose();
   }
+
+  Future<void> _connect() async {
+    final host = _hostController.text.trim();
+    await _ros.connect(host);
+    if (_ros.status == ConnectionStatus.connected) {
+      _ros.advertise();
+    }
+  }
+
+  Color _statusColor(ConnectionStatus s) => switch (s) {
+        ConnectionStatus.connected => const Color(0xFF00E5A0),
+        ConnectionStatus.connecting => Colors.amber,
+        ConnectionStatus.error => Colors.redAccent,
+        ConnectionStatus.disconnected => Colors.grey,
+      };
+
+  String _statusLabel(ConnectionStatus s) => switch (s) {
+        ConnectionStatus.connected => 'Connected',
+        ConnectionStatus.connecting => 'Connecting…',
+        ConnectionStatus.error => 'Error',
+        ConnectionStatus.disconnected => 'Disconnected',
+      };
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Header ──────────────────────────────────────────────────
+              const Text(
+                'Turtle Controller',
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              StreamBuilder<ConnectionStatus>(
+                stream: _ros.statusStream,
+                initialData: ConnectionStatus.disconnected,
+                builder: (_, snap) {
+                  final s = snap.data!;
+                  return Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _statusColor(s),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _statusLabel(s),
+                        style: TextStyle(color: _statusColor(s), fontSize: 13),
+                      ),
+                    ],
+                  );
+                },
+              ),
+
+              const SizedBox(height: 28),
+
+              // ── Connection row ───────────────────────────────────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _hostController,
+                      decoration: InputDecoration(
+                        labelText: 'Robot IP',
+                        hintText: '192.168.1.x',
+                        prefixIcon: const Icon(Icons.wifi),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: const Color(0xFF1A1A1A),
+                      ),
+                      keyboardType: TextInputType.url,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  StreamBuilder<ConnectionStatus>(
+                    stream: _ros.statusStream,
+                    initialData: ConnectionStatus.disconnected,
+                    builder: (_, snap) {
+                      final connected = snap.data == ConnectionStatus.connected;
+                      return FilledButton(
+                        onPressed: connected ? _ros.disconnect : _connect,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: connected
+                              ? Colors.redAccent
+                              : const Color(0xFF00E5A0),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 18,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(connected ? 'Disconnect' : 'Connect'),
+                      );
+                    },
+                  ),
+                ],
+              ),
+
+              const Spacer(),
+
+              // ── Controls ─────────────────────────────────────────────────
+              StreamBuilder<ConnectionStatus>(
+                stream: _ros.statusStream,
+                initialData: ConnectionStatus.disconnected,
+                builder: (_, snap) {
+                  final enabled = snap.data == ConnectionStatus.connected;
+                  return Column(
+                    children: [
+                      // Forward
+                      _ControlButton(
+                        icon: Icons.arrow_upward_rounded,
+                        label: 'Forward',
+                        enabled: enabled,
+                        onPressStart: () => _ros.publishTwist(linearX: _speed),
+                        onPressEnd: _ros.stop,
+                      ),
+                      const SizedBox(height: 12),
+                      // Left / Right row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _ControlButton(
+                            icon: Icons.arrow_back_rounded,
+                            label: 'Left',
+                            enabled: enabled,
+                            onPressStart: () =>
+                                _ros.publishTwist(angularZ: _turnSpeed),
+                            onPressEnd: _ros.stop,
+                          ),
+                          const SizedBox(width: 12),
+                          // Stop button in centre
+                          GestureDetector(
+                            onTap: enabled ? _ros.stop : null,
+                            child: Container(
+                              width: 72,
+                              height: 72,
+                              decoration: BoxDecoration(
+                                color: enabled
+                                    ? const Color(0xFF1A1A1A)
+                                    : const Color(0xFF111111),
+                                borderRadius: BorderRadius.circular(36),
+                                border: Border.all(
+                                  color: enabled
+                                      ? Colors.grey.shade600
+                                      : Colors.grey.shade800,
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.stop_rounded,
+                                size: 32,
+                                color: enabled
+                                    ? Colors.white70
+                                    : Colors.grey.shade700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          _ControlButton(
+                            icon: Icons.arrow_forward_rounded,
+                            label: 'Right',
+                            enabled: enabled,
+                            onPressStart: () =>
+                                _ros.publishTwist(angularZ: -_turnSpeed),
+                            onPressEnd: _ros.stop,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Backward
+                      _ControlButton(
+                        icon: Icons.arrow_downward_rounded,
+                        label: 'Backward',
+                        enabled: enabled,
+                        onPressStart: () => _ros.publishTwist(linearX: -_speed),
+                        onPressEnd: _ros.stop,
+                      ),
+                    ],
+                  );
+                },
+              ),
+
+              const Spacer(),
+
+              // ── Hint ─────────────────────────────────────────────────────
+              Center(
+                child: Text(
+                  'Hold buttons to move • Release to stop',
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reusable hold-to-move button
+// ---------------------------------------------------------------------------
+
+class _ControlButton extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onPressStart;
+  final VoidCallback onPressEnd;
+
+  const _ControlButton({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onPressStart,
+    required this.onPressEnd,
+  });
+
+  @override
+  State<_ControlButton> createState() => _ControlButtonState();
+}
+
+class _ControlButtonState extends State<_ControlButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = const Color(0xFF00E5A0);
+
+    return GestureDetector(
+      onTapDown: widget.enabled
+          ? (_) {
+              setState(() => _pressed = true);
+              widget.onPressStart();
+            }
+          : null,
+      onTapUp: widget.enabled
+          ? (_) {
+              setState(() => _pressed = false);
+              widget.onPressEnd();
+            }
+          : null,
+      onTapCancel: widget.enabled
+          ? () {
+              setState(() => _pressed = false);
+              widget.onPressEnd();
+            }
+          : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 80),
+        width: 88,
+        height: 88,
+        decoration: BoxDecoration(
+          color: _pressed
+              ? accent.withOpacity(0.15)
+              : widget.enabled
+                  ? const Color(0xFF1A1A1A)
+                  : const Color(0xFF111111),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: _pressed
+                ? accent
+                : widget.enabled
+                    ? Colors.grey.shade700
+                    : Colors.grey.shade800,
+            width: _pressed ? 2 : 1,
+          ),
+        ),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text('You have pushed the button this many times:'),
+            Icon(
+              widget.icon,
+              size: 32,
+              color: _pressed
+                  ? accent
+                  : widget.enabled
+                      ? Colors.white70
+                      : Colors.grey.shade700,
+            ),
+            const SizedBox(height: 4),
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              widget.label,
+              style: TextStyle(
+                fontSize: 10,
+                color: _pressed
+                    ? accent
+                    : widget.enabled
+                        ? Colors.white38
+                        : Colors.grey.shade800,
+              ),
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
       ),
     );
   }
