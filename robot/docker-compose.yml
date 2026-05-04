@@ -10,14 +10,13 @@ services:
       - ROS_LOCALHOST_ONLY=0
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
-      # 👇 IMPORTANT: enable GUI
+      # GUI
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
+      - QT_SCALE_FACTOR=3
 
     volumes:
       - ros2_data:/ros2_ws/data
-
-      # 👇 share X11 socket with container
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
 volumes:
