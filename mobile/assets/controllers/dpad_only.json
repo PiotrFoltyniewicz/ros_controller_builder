@@ -1,0 +1,19 @@
+{
+  "id": "dpad_only",
+  "name": "D-Pad Controller",
+  "themeColor": "#00E5A0",
+  "components": [
+    {
+      "type": "dpad",
+      "topic": "/turtle1/cmd_vel",
+      "x": 60,
+      "y": 100,
+      "width": 240,
+      "height": 240,
+      "properties": {
+        "linearSpeed": 2.0,
+        "angularSpeed": 1.8
+      }
+    }
+  ]
+}

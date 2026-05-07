@@ -1,0 +1,19 @@
+{
+  "id": "test",
+  "name": "test",
+  "themeColor": "#00E5A0",
+  "components": [
+    {
+      "type": "dpad",
+      "topic": "/new_dpad",
+      "x": 20.0,
+      "y": 20.0,
+      "width": 240.0,
+      "height": 240.0,
+      "properties": {
+        "linearSpeed": 2.0,
+        "angularSpeed": 1.8
+      }
+    }
+  ]
+}

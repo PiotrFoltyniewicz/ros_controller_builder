@@ -1,5 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'ros_bridge.dart';
+import 'models/custom_controller.dart';
+import 'widgets/custom_controller_renderer.dart';
 
 void main() => runApp(const MyApp());
 
@@ -18,28 +23,57 @@ class MyApp extends StatelessWidget {
         ),
         scaffoldBackgroundColor: const Color(0xFF0D0D0D),
       ),
-      home: const ControllerPage(),
+      home: const MainMenuPage(),
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// Controller page
+// Main Menu page
 // ---------------------------------------------------------------------------
 
-class ControllerPage extends StatefulWidget {
-  const ControllerPage({super.key});
+class MainMenuPage extends StatefulWidget {
+  const MainMenuPage({super.key});
 
   @override
-  State<ControllerPage> createState() => _ControllerPageState();
+  State<MainMenuPage> createState() => _MainMenuPageState();
 }
 
-class _ControllerPageState extends State<ControllerPage> {
+class _MainMenuPageState extends State<MainMenuPage> {
   final _ros = RosBridge();
   final _hostController = TextEditingController(text: '192.168.1.x');
 
-  static const double _speed = 2.0;
-  static const double _turnSpeed = 1.8;
+  List<CustomController> _presets = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPresets();
+  }
+
+  Future<void> _loadPresets() async {
+    try {
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final controllerPaths = manifest.listAssets()
+          .where((String key) => key.startsWith('assets/controllers/') && key.endsWith('.json'))
+          .toList();
+
+      List<CustomController> loaded = [];
+      for (String path in controllerPaths) {
+        final jsonStr = await rootBundle.loadString(path);
+        loaded.add(CustomController.fromJson(jsonDecode(jsonStr), sourcePath: path));
+      }
+
+      setState(() {
+        _presets = loaded;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load presets: $e');
+      setState(() => _loading = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -51,9 +85,6 @@ class _ControllerPageState extends State<ControllerPage> {
   Future<void> _connect() async {
     final host = _hostController.text.trim();
     await _ros.connect(host);
-    if (_ros.status == ConnectionStatus.connected) {
-      _ros.advertise();
-    }
   }
 
   Color _statusColor(ConnectionStatus s) => switch (s) {
@@ -70,194 +101,313 @@ class _ControllerPageState extends State<ControllerPage> {
         ConnectionStatus.disconnected => 'Disconnected',
       };
 
+  Color _parseColor(String colorString) {
+    if (colorString.startsWith('#')) {
+      final hex = colorString.substring(1);
+      if (hex.length == 6) {
+        return Color(int.parse('FF$hex', radix: 16));
+      }
+    }
+    return const Color(0xFF00E5A0);
+  }
+
+  void _openController(CustomController config) {
+    // Advertise needed topics
+    if (_ros.status == ConnectionStatus.connected) {
+      for (final comp in config.components) {
+        if (comp.type == 'dpad') {
+          _ros.advertise(topic: comp.topic);
+        }
+      }
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ControllerPage(
+          controllerConfig: config,
+          ros: _ros,
+        ),
+      ),
+    ).then((_) {
+      // Reload presets upon return in case we edited and saved
+      setState(() { _loading = true; });
+      _loadPresets();
+    });
+  }
+
+  Future<void> _createNewPreset(BuildContext context) async {
+    final tc = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('New Controller Name'),
+        content: TextField(
+          controller: tc,
+          decoration: const InputDecoration(labelText: 'Name'),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, tc.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+
+    if (name == null || name.isEmpty) return;
+
+    final id = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    final fileName = '${id}_${DateTime.now().millisecondsSinceEpoch}.json';
+    final path = 'assets/controllers/$fileName';
+    final absPath = '/home/piotr/Projects/ros_controller_builder/mobile/$path';
+
+    final newController = CustomController(
+      id: id,
+      name: name,
+      themeColor: '#00E5A0',
+      components: [],
+      sourcePath: path,
+    );
+
+    try {
+      final file = File(absPath);
+      file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(newController.toJson()));
+      setState(() {
+        _presets.add(newController);
+      });
+    } catch (e) {
+      debugPrint("Failed to create preset: $e");
+    }
+  }
+
+  Future<void> _deletePreset(CustomController preset) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Preset?'),
+        content: Text('Are you sure you want to delete "${preset.name}"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        if (preset.sourcePath != null) {
+          final file = File('/home/piotr/Projects/ros_controller_builder/mobile/${preset.sourcePath}');
+          if (file.existsSync()) {
+            file.deleteSync();
+          }
+        }
+        setState(() {
+          _presets.removeWhere((p) => p.id == preset.id && p.sourcePath == preset.sourcePath);
+        });
+      } catch (e) {
+        debugPrint("Failed to delete preset: $e");
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // ── Header ──────────────────────────────────────────────────
-              const Text(
-                'Turtle Controller',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.5,
-                ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Persistent Connection Header
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF161616),
+                border: Border(bottom: BorderSide(color: Colors.grey.shade900)),
               ),
-              const SizedBox(height: 4),
-              StreamBuilder<ConnectionStatus>(
-                stream: _ros.statusStream,
-                initialData: ConnectionStatus.disconnected,
-                builder: (_, snap) {
-                  final s = snap.data!;
-                  return Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _statusColor(s),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _statusLabel(s),
-                        style: TextStyle(color: _statusColor(s), fontSize: 13),
-                      ),
-                    ],
-                  );
-                },
-              ),
-
-              const SizedBox(height: 28),
-
-              // ── Connection row ───────────────────────────────────────────
-              Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _hostController,
-                      decoration: InputDecoration(
-                        labelText: 'Robot IP',
-                        hintText: '192.168.1.x',
-                        prefixIcon: const Icon(Icons.wifi),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFF1A1A1A),
-                      ),
-                      keyboardType: TextInputType.url,
+                  const Text(
+                    'ROS 2 Controller Builder',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(height: 8),
                   StreamBuilder<ConnectionStatus>(
                     stream: _ros.statusStream,
                     initialData: ConnectionStatus.disconnected,
                     builder: (_, snap) {
-                      final connected = snap.data == ConnectionStatus.connected;
-                      return FilledButton(
-                        onPressed: connected ? _ros.disconnect : _connect,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: connected
-                              ? Colors.redAccent
-                              : const Color(0xFF00E5A0),
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 18,
+                      final s = snap.data!;
+                      return Row(
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: _statusColor(s),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                          const SizedBox(width: 8),
+                          Text(
+                            _statusLabel(s),
+                            style: TextStyle(color: _statusColor(s), fontSize: 13),
                           ),
-                        ),
-                        child: Text(connected ? 'Disconnect' : 'Connect'),
+                        ],
                       );
                     },
                   ),
-                ],
-              ),
-
-              const Spacer(),
-
-              // ── Controls ─────────────────────────────────────────────────
-              StreamBuilder<ConnectionStatus>(
-                stream: _ros.statusStream,
-                initialData: ConnectionStatus.disconnected,
-                builder: (_, snap) {
-                  final enabled = snap.data == ConnectionStatus.connected;
-                  return Column(
+                  const SizedBox(height: 16),
+                  Row(
                     children: [
-                      // Forward
-                      _ControlButton(
-                        icon: Icons.arrow_upward_rounded,
-                        label: 'Forward',
-                        enabled: enabled,
-                        onPressStart: () => _ros.publishTwist(linearX: _speed),
-                        onPressEnd: _ros.stop,
-                      ),
-                      const SizedBox(height: 12),
-                      // Left / Right row
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _ControlButton(
-                            icon: Icons.arrow_back_rounded,
-                            label: 'Left',
-                            enabled: enabled,
-                            onPressStart: () =>
-                                _ros.publishTwist(angularZ: _turnSpeed),
-                            onPressEnd: _ros.stop,
+                      Expanded(
+                        child: TextField(
+                          controller: _hostController,
+                          decoration: InputDecoration(
+                            labelText: 'Robot IP',
+                            hintText: '192.168.1.x',
+                            prefixIcon: const Icon(Icons.wifi, size: 20),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            filled: true,
+                            fillColor: const Color(0xFF0D0D0D),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16),
                           ),
-                          const SizedBox(width: 12),
-                          // Stop button in centre
-                          GestureDetector(
-                            onTap: enabled ? _ros.stop : null,
-                            child: Container(
-                              width: 72,
-                              height: 72,
-                              decoration: BoxDecoration(
-                                color: enabled
-                                    ? const Color(0xFF1A1A1A)
-                                    : const Color(0xFF111111),
-                                borderRadius: BorderRadius.circular(36),
-                                border: Border.all(
-                                  color: enabled
-                                      ? Colors.grey.shade600
-                                      : Colors.grey.shade800,
-                                ),
+                          keyboardType: TextInputType.url,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      StreamBuilder<ConnectionStatus>(
+                        stream: _ros.statusStream,
+                        initialData: ConnectionStatus.disconnected,
+                        builder: (_, snap) {
+                          final connected = snap.data == ConnectionStatus.connected;
+                          return FilledButton(
+                            onPressed: connected ? _ros.disconnect : _connect,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: connected
+                                  ? Colors.redAccent
+                                  : const Color(0xFF00E5A0),
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 16,
                               ),
-                              child: Icon(
-                                Icons.stop_rounded,
-                                size: 32,
-                                color: enabled
-                                    ? Colors.white70
-                                    : Colors.grey.shade700,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          _ControlButton(
-                            icon: Icons.arrow_forward_rounded,
-                            label: 'Right',
-                            enabled: enabled,
-                            onPressStart: () =>
-                                _ros.publishTwist(angularZ: -_turnSpeed),
-                            onPressEnd: _ros.stop,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      // Backward
-                      _ControlButton(
-                        icon: Icons.arrow_downward_rounded,
-                        label: 'Backward',
-                        enabled: enabled,
-                        onPressStart: () => _ros.publishTwist(linearX: -_speed),
-                        onPressEnd: _ros.stop,
+                            child: Text(connected ? 'Disconnect' : 'Connect'),
+                          );
+                        },
                       ),
                     ],
-                  );
-                },
+                  ),
+                ],
               ),
+            ),
+            
+            // Presets Grid
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : GridView.builder(
+                      padding: const EdgeInsets.all(24),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 16,
+                        childAspectRatio: 1.0,
+                      ),
+                      itemCount: _presets.length + 1,
+                      itemBuilder: (context, index) {
+                        if (index == _presets.length) {
+                          // "Create Controller" tile
+                          return InkWell(
+                            onTap: () => _createNewPreset(context),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.white24, style: BorderStyle.solid),
+                              ),
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.add_circle_outline, size: 48, color: Colors.white54),
+                                  SizedBox(height: 12),
+                                  Text(
+                                    'Create New',
+                                    style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
 
-              const Spacer(),
-
-              // ── Hint ─────────────────────────────────────────────────────
-              Center(
-                child: Text(
-                  'Hold buttons to move • Release to stop',
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
+                        final preset = _presets[index];
+                        final cColor = _parseColor(preset.themeColor);
+                        return InkWell(
+                          onTap: () => _openController(preset),
+                          onLongPress: () => _deletePreset(preset),
+                          borderRadius: BorderRadius.circular(16),
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: cColor.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(color: cColor.withOpacity(0.5)),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.gamepad, size: 48, color: cColor),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        preset.name,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(color: cColor, fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '${preset.components.length} components',
+                                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: IconButton(
+                                  icon: const Icon(Icons.delete_outline, size: 20),
+                                  color: Colors.redAccent,
+                                  onPressed: () => _deletePreset(preset),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
         ),
       ),
     );
@@ -265,101 +415,163 @@ class _ControllerPageState extends State<ControllerPage> {
 }
 
 // ---------------------------------------------------------------------------
-// Reusable hold-to-move button
+// Controller Page
 // ---------------------------------------------------------------------------
 
-class _ControlButton extends StatefulWidget {
-  final IconData icon;
-  final String label;
-  final bool enabled;
-  final VoidCallback onPressStart;
-  final VoidCallback onPressEnd;
+class ControllerPage extends StatefulWidget {
+  final CustomController controllerConfig;
+  final RosBridge ros;
 
-  const _ControlButton({
-    required this.icon,
-    required this.label,
-    required this.enabled,
-    required this.onPressStart,
-    required this.onPressEnd,
+  const ControllerPage({
+    super.key,
+    required this.controllerConfig,
+    required this.ros,
   });
 
   @override
-  State<_ControlButton> createState() => _ControlButtonState();
+  State<ControllerPage> createState() => _ControllerPageState();
 }
 
-class _ControlButtonState extends State<_ControlButton> {
-  bool _pressed = false;
+class _ControllerPageState extends State<ControllerPage> {
+  late CustomController _config;
+  bool _isEditing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _config = widget.controllerConfig;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final accent = const Color(0xFF00E5A0);
-
-    return GestureDetector(
-      onTapDown: widget.enabled
-          ? (_) {
-              setState(() => _pressed = true);
-              widget.onPressStart();
-            }
-          : null,
-      onTapUp: widget.enabled
-          ? (_) {
-              setState(() => _pressed = false);
-              widget.onPressEnd();
-            }
-          : null,
-      onTapCancel: widget.enabled
-          ? () {
-              setState(() => _pressed = false);
-              widget.onPressEnd();
-            }
-          : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
-        width: 88,
-        height: 88,
-        decoration: BoxDecoration(
-          color: _pressed
-              ? accent.withOpacity(0.15)
-              : widget.enabled
-                  ? const Color(0xFF1A1A1A)
-                  : const Color(0xFF111111),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: _pressed
-                ? accent
-                : widget.enabled
-                    ? Colors.grey.shade700
-                    : Colors.grey.shade800,
-            width: _pressed ? 2 : 1,
-          ),
+    return Scaffold(
+      backgroundColor: const Color(0xFF000000),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              widget.icon,
-              size: 32,
-              color: _pressed
-                  ? accent
-                  : widget.enabled
-                      ? Colors.white70
-                      : Colors.grey.shade700,
+        title: Text(_config.name),
+        centerTitle: true,
+        actions: [
+          if (_isEditing)
+            IconButton(
+              icon: const Icon(Icons.add),
+              color: Colors.white,
+              onPressed: _showAddComponentDialog,
             ),
-            const SizedBox(height: 4),
-            Text(
-              widget.label,
-              style: TextStyle(
-                fontSize: 10,
-                color: _pressed
-                    ? accent
-                    : widget.enabled
-                        ? Colors.white38
-                        : Colors.grey.shade800,
-              ),
-            ),
-          ],
+          IconButton(
+            icon: Icon(_isEditing ? Icons.check : Icons.edit),
+            color: _isEditing ? Colors.greenAccent : Colors.white,
+            onPressed: () {
+              if (_isEditing) {
+                // User is saving edits
+                if (_config.sourcePath != null) {
+                  try {
+                    // Try to save directly to the workspace file if running on a compatible descriptor
+                    final file = File('/home/piotr/Projects/ros_controller_builder/mobile/${_config.sourcePath}');
+                    if (file.existsSync()) {
+                      file.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(_config.toJson()));
+                    } else {
+                      debugPrint("Cannot save to source path natively: file does not exist locally");
+                    }
+                  } catch (e) {
+                    debugPrint("Save failed: $e");
+                  }
+                }
+              }
+              setState(() {
+                _isEditing = !_isEditing;
+              });
+            },
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: StreamBuilder<ConnectionStatus>(
+            stream: widget.ros.statusStream,
+            initialData: widget.ros.status,
+            builder: (_, snap) {
+              // Disable standard controller output while editing
+              final enabled = snap.data == ConnectionStatus.connected && !_isEditing;
+              return CustomControllerRenderer(
+                controllerConfig: _config,
+                ros: widget.ros,
+                enabled: enabled,
+                isEditing: _isEditing,
+                onComponentUpdated: (index, newComp) {
+                  setState(() {
+                    final newComps = List<ControllerComponent>.from(_config.components);
+                    newComps[index] = newComp;
+                    _config = _config.copyWith(components: newComps);
+                  });
+                },
+                onComponentDeleted: (index) {
+                  setState(() {
+                    final newComps = List<ControllerComponent>.from(_config.components);
+                    newComps.removeAt(index);
+                    _config = _config.copyWith(components: newComps);
+                  });
+                },
+              );
+            },
+          ),
         ),
       ),
     );
+  }
+
+  void _showAddComponentDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Add Component'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.gamepad),
+                title: const Text('D-Pad'),
+                onTap: () => _addComponent('dpad', 240, 240, {'linearSpeed': 2.0, 'angularSpeed': 1.8}, ctx),
+              ),
+              ListTile(
+                leading: const Icon(Icons.radio_button_checked),
+                title: const Text('Button'),
+                onTap: () => _addComponent('button', 70, 70, {'label': 'Btn', 'rosType': 'std_msgs/Empty'}, ctx),
+              ),
+              ListTile(
+                leading: const Icon(Icons.tune),
+                title: const Text('Slider'),
+                onTap: () => _addComponent('slider', 220, 60, {'rosType': 'std_msgs/Float64', 'min': 0.0, 'max': 1.0}, ctx),
+              ),
+            ],
+          ),
+        );
+      }
+    );
+  }
+
+  void _addComponent(String type, double width, double height, Map<String, dynamic> props, BuildContext ctx) {
+    Navigator.pop(ctx);
+    setState(() {
+      final newComps = List<ControllerComponent>.from(_config.components);
+      newComps.add(
+        ControllerComponent(
+          type: type,
+          topic: '/new_$type',
+          x: 20,
+          y: 20,
+          width: width,
+          height: height,
+          properties: props,
+        )
+      );
+      _config = _config.copyWith(components: newComps);
+    });
   }
 }

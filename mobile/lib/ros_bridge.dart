@@ -61,7 +61,7 @@ class RosBridge {
     _channel?.sink.add(jsonEncode(msg));
   }
 
-  void stop() => publishTwist(linearX: 0, angularZ: 0);
+  void stop({String topic = '/turtle1/cmd_vel'}) => publishTwist(linearX: 0, angularZ: 0, topic: topic);
 
   void disconnect() {
     _channel?.sink.close();
